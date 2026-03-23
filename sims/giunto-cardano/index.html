@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Giunto di Cardano — Simulatore Interattivo 3D</title>
+<script>
+window._mjReady = new Promise(r => { window._mjResolve = r; });
+window.MathJax = {
+  tex: { inlineMath: [['$','$']] },
+  loader: { load: ['input/tex', 'output/svg'] },
+  svg: { fontCache: 'local' },
+  startup: { ready() { MathJax.startup.defaultReady(); MathJax.startup.promise.then(window._mjResolve); } }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+}}
+</script>
+<style>
+:root { --bg:#1a1a2e; --panel:#16213e; --accent:#0f3460; --text:#e0e0e0; --highlight:#e94560; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; height:100vh; overflow:hidden; }
+.panel {
+  background:var(--panel); padding:10px; overflow-y:auto; overflow-x:hidden;
+  display:flex; flex-direction:column; gap:8px;
+  height:100vh; max-height:100vh; min-height:0;
+  transition: width .25s cubic-bezier(.4,0,.2,1),
+              min-width .25s cubic-bezier(.4,0,.2,1),
+              padding .25s cubic-bezier(.4,0,.2,1);
+}
+#left-panel  { width:300px; min-width:200px; max-width:45vw; }
+#right-panel { width:340px; min-width:200px; max-width:50vw; }
+.panel.collapsed { width:0 !important; min-width:0 !important; padding:0 !important; overflow:hidden !important; }
+.panel h1 { font-size:1.05em; color:var(--highlight); text-align:center; }
+.panel h2 { font-size:.78em; color:#aaa; text-align:center; font-weight:normal; margin-bottom:2px; }
+.resizer {
+  width:14px; cursor:col-resize; background:var(--accent); flex-shrink:0;
+  transition:background .15s; position:relative; display:flex;
+  align-items:center; justify-content:center;
+}
+.resizer:hover, .resizer.dragging { background:var(--highlight); }
+.collapse-btn {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:14px; height:40px; background:rgba(10,30,60,0.92);
+  border:1px solid #444; border-radius:4px; color:#aaa;
+  cursor:pointer; font-size:10px; display:flex; align-items:center;
+  justify-content:center; z-index:10; padding:0; line-height:1;
+  transition:background .15s, color .15s;
+}
+.collapse-btn:hover { background:var(--highlight); color:white; border-color:var(--highlight); }
+.section { background:var(--accent); border-radius:8px; padding:7px 9px; overflow:hidden; flex-shrink:0; }
+.section-title {
+  font-size:.72em; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#aaa;
+  margin-bottom:5px; display:flex; justify-content:space-between; align-items:center;
+}
+.sec-toggle {
+  font-size:11px; color:#888; cursor:pointer; user-select:none; padding:0 3px;
+  line-height:1; transition:color .15s;
+}
+.sec-toggle:hover { color:var(--highlight); }
+.section-body { overflow:hidden; transition:max-height .25s ease, opacity .2s ease; max-height:600px; opacity:1; }
+.section-body.collapsed { max-height:0 !important; opacity:0; }
+.section-title.collapsible { cursor:pointer; }
+.section-title.collapsible:hover .sec-toggle { color:var(--highlight); }
+.param-row { display:flex; align-items:center; gap:5px; margin-bottom:3px; }
+.param-row label { flex:0 0 60px; font-size:.8em; text-align:right; }
+.param-row input[type="range"] { flex:1; min-width:0; accent-color:var(--highlight); }
+.param-row .val { flex:0 0 50px; font-size:.76em; font-family:monospace; color:#ccc; text-align:right; white-space:nowrap; }
+.checkbox-row { display:flex; align-items:center; gap:5px; margin-bottom:2px; }
+.checkbox-row input[type="checkbox"] { accent-color:var(--highlight); width:14px; height:14px; }
+.checkbox-row label { font-size:.8em; cursor:pointer; }
+button { background:var(--highlight); color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:.78em; font-weight:600; }
+button:hover { background:#c73e54; }
+button.secondary { background:var(--accent); border:1px solid #555; }
+button.secondary:hover { background:#1a3a6a; }
+.btn-row { display:flex; gap:5px; flex-wrap:wrap; }
+#viewport-container { flex:1; position:relative; overflow:hidden; min-width:0; }
+#viewport-container canvas { display:block; }
+#info-box { background:rgba(0,0,0,.3); border-radius:6px; padding:6px 8px; font-family:monospace; font-size:.72em; line-height:1.5; white-space:pre-line; }
+.plot-hint { font-size:.65em; color:rgba(255,255,255,.25); text-align:right; margin-top:2px; }
+mjx-container { display:inline !important; }
+.panel::-webkit-scrollbar { width:6px; }
+.panel::-webkit-scrollbar-track { background:transparent; }
+.panel::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.18); border-radius:3px; }
+.panel::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.35); }
+.panel { scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.18) transparent; }
+</style>
+</head>
+<body>
+
+<!-- ═══ LEFT PANEL ═══ -->
+<div id="left-panel" class="panel">
+  <h1>Giunto di Cardano</h1>
+  <h2>Simulatore cinematico 3D</h2>
+  <div style="text-align:center;font-size:.68em;color:#888;line-height:1.4;margin-bottom:2px;">
+    Prof. Marco Gabiccini<br>Meccanica Applicata alle Macchine<br>
+    <span style="font-size:.9em;color:#666;">Tutti i diritti riservati</span>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Parametri geometrici</div>
+    <div class="param-row"><label>$\alpha$ (°):</label>
+      <input type="range" id="alpha-slider" min="0" max="80" value="30" step="1">
+      <span class="val" id="alpha-val">30°</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Cinematica</div>
+    <div class="param-row"><label>$\omega_2$:</label>
+      <input type="range" id="omega2-slider" min="0.1" max="10" value="2" step="0.1">
+      <span class="val" id="omega2-val">2.0</span></div>
+    <div class="param-row"><label>$\varphi_2$ (°):</label>
+      <input type="range" id="phi2-slider" min="0" max="360" value="0" step="1">
+      <span class="val" id="phi2-val">0°</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Visualizzazione</div>
+    <div class="checkbox-row"><input type="checkbox" id="show-frame" checked>
+      <label for="show-frame">Mostra telaio</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="show-axes" checked>
+      <label for="show-axes">Assi di rotazione ($\hat\imath$, $\hat\imath_c$)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="show-fixed-frame">
+      <label for="show-fixed-frame">Terna fissa ($\hat\imath$, $\hat\jmath$, $\hat k$)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="show-versors">
+      <label for="show-versors">Terna crociera ($\hat c_1\!=\!\hat\mu$, $\hat c_2\!=\!\hat\nu$, $\hat c_3$)</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="show-traces">
+      <label for="show-traces">Tracce terna crociera</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="show-rot-arrows" checked>
+      <label for="show-rot-arrows">Frecce di rotazione ($\varphi_2$, $\varphi_4$)</label></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Simulazione</div>
+    <div class="btn-row" style="margin-bottom:4px;">
+      <button id="btn-play">&#9654; Simula</button>
+      <button id="btn-stop" class="secondary">&#9632; Stop</button>
+      <button id="btn-reset" class="secondary">Reset</button>
+    </div>
+    <div class="param-row"><label>Velocità:</label>
+      <input type="range" id="speed-slider" min="0.1" max="3" value="1" step="0.1">
+      <span class="val" id="speed-val">1.0×</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title collapsible" id="hdr-eq">
+      <span>Equazioni</span><span class="sec-toggle">&#9660;</span>
+    </div>
+    <div class="section-body" id="body-eq" style="font-size:.82em;line-height:1.9;">
+      $\tan\varphi_4 = \cos\alpha\,\tan\varphi_2$<br>
+      $\tau = \dfrac{\omega_4}{\omega_2} = \dfrac{\cos\alpha}{1-\sin^2\!\alpha\;\sin^2\!\varphi_2}$<br>
+      $\tau_{\max} = \dfrac{1}{\cos\alpha}\qquad\tau_{\min} = \cos\alpha$<br>
+      $\delta = \sin\alpha\,\tan\alpha$
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Legenda</div>
+    <div style="font-size:.78em;line-height:1.6;">
+      <span style="color:#888">&#9632;</span> Telaio (corpo 1)<br>
+      <span style="color:#4ecdc4">&#9632;</span> Albero ingresso (corpo 2)<br>
+      <span style="color:#e94560">&#9632;</span> Crociera (corpo 3)<br>
+      <span style="color:#f77f00">&#9632;</span> Albero uscita (corpo 4)<br>
+      <span style="font-size:.9em;color:#777;margin-top:2px;display:inline-block;">Terna fissa:</span>
+      <span style="color:#fff">&#9644;</span> $\hat\imath$, $\hat\jmath$, $\hat k$<br>
+      <span style="font-size:.9em;color:#777;margin-top:2px;display:inline-block;">Terna crociera:</span><br>
+      <span style="color:#ff4444">&#9644;</span> $\hat c_1 = \hat\mu$&ensp;
+      <span style="color:#44cc44">&#9644;</span> $\hat c_2 = \hat\nu$&ensp;
+      <span style="color:#4488ff">&#9644;</span> $\hat c_3$
+    </div>
+  </div>
+</div>
+
+<div id="left-resizer" class="resizer">
+  <button class="collapse-btn" id="left-collapse" title="Chiudi/apri pannello">&#9664;</button>
+</div>
+
+<!-- ═══ 3D VIEWPORT ═══ -->
+<div id="viewport-container"></div>
+
+<div id="right-resizer" class="resizer">
+  <button class="collapse-btn" id="right-collapse" title="Chiudi/apri pannello">&#9654;</button>
+</div>
+
+<!-- ═══ RIGHT PANEL ═══ -->
+<div id="right-panel" class="panel">
+  <div class="section">
+    <div class="section-title collapsible" id="hdr-tau">
+      <span>Rapporto di trasmissione $\tau(\varphi_2)$</span>
+      <span class="sec-toggle">&#9660;</span>
+    </div>
+    <div class="section-body" id="body-tau">
+      <canvas id="tau-canvas" width="380" height="160"
+        style="width:100%;border-radius:6px;background:rgba(0,0,0,.3);display:block;"></canvas>
+      <div class="plot-hint">scroll: zoom &nbsp;&middot;&nbsp; drag: pan &nbsp;&middot;&nbsp; dbl-click: reset</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title collapsible" id="hdr-delta">
+      <span>Errore angolare $\Delta\varphi = \varphi_4 - \varphi_2$</span>
+      <span class="sec-toggle">&#9660;</span>
+    </div>
+    <div class="section-body" id="body-delta">
+      <canvas id="delta-canvas" width="380" height="140"
+        style="width:100%;border-radius:6px;background:rgba(0,0,0,.3);display:block;"></canvas>
+      <div class="plot-hint">scroll: zoom &nbsp;&middot;&nbsp; drag: pan &nbsp;&middot;&nbsp; dbl-click: reset</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Stato corrente</div>
+    <div id="info-box">Imposta i parametri e avvia la simulazione.</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<script type="module">
+'use strict';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let alpha = 30 * Math.PI / 180;
+let omega2 = 2.0;
+let speed = 1.0;
+let currentPhi2 = 0;
+const animState = { running: false, phi2: 0, time: 0, lastTs: 0 };
+let hist = [];
+const MAX_HIST = 6000;
+
+// ── Kinematics ─────────────────────────────────────────────────────────────────
+function kinematic(phi2, a) {
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const phi4 = Math.atan2(ca * Math.sin(phi2), Math.cos(phi2));
+  const tau = ca / (1 - sa * sa * Math.sin(phi2) * Math.sin(phi2));
+  return { phi4, tau };
+}
+
+// ── PanZoomView ────────────────────────────────────────────────────────────────
+class PanZoomView {
+  constructor(x0, x1, y0, y1) {
+    this._x0=x0; this._x1=x1; this._y0=y0; this._y1=y1;
+    this.xMin=x0; this.xMax=x1; this.yMin=y0; this.yMax=y1; this.active=false;
+  }
+  toX(v,p,W) { return p.l+(v-this.xMin)/(this.xMax-this.xMin)*(W-p.l-p.r); }
+  toY(v,p,H) { return p.t+(H-p.t-p.b)*(1-(v-this.yMin)/(this.yMax-this.yMin)); }
+  px2d(px,py,p,W,H) {
+    return [this.xMin+(px-p.l)/(W-p.l-p.r)*(this.xMax-this.xMin),
+            this.yMin+(1-(py-p.t)/(H-p.t-p.b))*(this.yMax-this.yMin)];
+  }
+  zoomAt(f,xd,yd) {
+    this.active=true;
+    this.xMin=xd+(this.xMin-xd)*f; this.xMax=xd+(this.xMax-xd)*f;
+    this.yMin=yd+(this.yMin-yd)*f; this.yMax=yd+(this.yMax-yd)*f;
+  }
+  pan(dx,dy) { this.active=true; this.xMin-=dx; this.xMax-=dx; this.yMin-=dy; this.yMax-=dy; }
+  reset() { this.active=false; this.xMin=this._x0; this.xMax=this._x1; this.yMin=this._y0; this.yMax=this._y1; }
+  setRange(x0,x1,y0,y1) { if(!this.active){this.xMin=x0;this.xMax=x1;this.yMin=y0;this.yMax=y1;} }
+}
+
+const PAD = {l:42,r:14,t:14,b:26};
+const tauView    = new PanZoomView(0, 2*Math.PI, 0.5, 1.5);
+const deltaView  = new PanZoomView(0, 2*Math.PI, -0.5, 0.5);
+
+function niceTicks(lo, hi, target=5) {
+  if(hi<=lo) return [];
+  const rough=(hi-lo)/target;
+  const p10=Math.pow(10,Math.floor(Math.log10(Math.abs(rough)||1)));
+  const step=[1,2,2.5,5,10].find(f=>f*p10>=rough-1e-10)*p10;
+  const start=Math.ceil(lo/step-1e-9)*step, ticks=[];
+  for(let v=start;v<=hi+step*1e-9;v+=step) ticks.push(parseFloat(v.toFixed(10)));
+  return ticks;
+}
+
+function setupPanZoom(cvId, view, pad, redraw) {
+  const cv=document.getElementById(cvId);
+  cv.style.cursor='crosshair';
+  cv.addEventListener('wheel', e=>{
+    e.preventDefault();
+    const r=cv.getBoundingClientRect();
+    const px=(e.clientX-r.left)*(cv.width/r.width), py=(e.clientY-r.top)*(cv.height/r.height);
+    const [xd,yd]=view.px2d(px,py,pad,cv.width,cv.height);
+    view.zoomAt(e.deltaY>0?1.15:1/1.15, xd, yd); redraw();
+  },{passive:false});
+  let drag=false,lx,ly;
+  cv.addEventListener('mousedown', e=>{
+    drag=true; const r=cv.getBoundingClientRect();
+    lx=(e.clientX-r.left)*(cv.width/r.width); ly=(e.clientY-r.top)*(cv.height/r.height);
+    cv.style.cursor='grabbing';
+  });
+  window.addEventListener('mousemove', e=>{
+    if(!drag)return; const r=cv.getBoundingClientRect();
+    const px=(e.clientX-r.left)*(cv.width/r.width), py=(e.clientY-r.top)*(cv.height/r.height);
+    const pw=cv.width-pad.l-pad.r, ph=cv.height-pad.t-pad.b;
+    view.pan((px-lx)/pw*(view.xMax-view.xMin),-(py-ly)/ph*(view.yMax-view.yMin));
+    lx=px; ly=py; redraw();
+  });
+  window.addEventListener('mouseup', ()=>{ if(drag){drag=false; cv.style.cursor='crosshair';} });
+  cv.addEventListener('dblclick', ()=>{ view.reset(); redraw(); });
+}
+
+// ── MathJax image cache ────────────────────────────────────────────────────────
+const MI={};
+async function makeMathImg(latex,color,heightPx) {
+  const wrap=MathJax.tex2svg(latex,{display:false});
+  const svg=wrap.querySelector('svg');
+  const hEx=parseFloat(svg.getAttribute('height'))||1;
+  const wEx=parseFloat(svg.getAttribute('width'))||1;
+  const wPx=Math.ceil(wEx/hEx*heightPx)+2;
+  svg.setAttribute('height',heightPx); svg.setAttribute('width',wPx);
+  let s=new XMLSerializer().serializeToString(svg);
+  s=s.replace(/currentColor/g,color);
+  const url=URL.createObjectURL(new Blob([s],{type:'image/svg+xml;charset=utf-8'}));
+  const img=new Image();
+  await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src=url; });
+  URL.revokeObjectURL(url); return img;
+}
+function mimg(c,key,x,y,anchor='left') {
+  const img=MI[key]; if(!img) return;
+  if(anchor==='center') x-=img.naturalWidth/2;
+  else if(anchor==='right') x-=img.naturalWidth;
+  c.drawImage(img,Math.round(x),Math.round(y));
+}
+async function preloadMath() {
+  const defs=[
+    ['tau_lbl','\\tau','#4ecdc4',14],
+    ['phi2_lbl','\\varphi_2','#4ecdc4',13],
+    ['phi4_lbl','\\varphi_4','#f77f00',13],
+    ['dphi_lbl','\\Delta\\varphi','#ffdd57',13],
+    ['tau1_lbl','\\tau\\!=\\!1','rgba(255,255,255,0.45)',11],
+    ['tmax_lbl','\\tau_{\\max}','#e94560',11],
+    ['tmin_lbl','\\tau_{\\min}','#06d6a0',11],
+  ];
+  for(const [k,l,c,h] of defs) MI[k]=await makeMathImg(l,c,h);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  THREE.JS SCENE
+// ══════════════════════════════════════════════════════════════════════════════
+const container = document.getElementById('viewport-container');
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setClearColor(0x0d1117);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+camera.position.set(1.8, 1.2, 2.0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = false;
+controls.target.set(0, 0, 0);
+controls.addEventListener('change', ()=>{ if(!animState.running) renderOnce(); });
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(3, 5, 2);
+scene.add(dirLight);
+
+const grid = new THREE.GridHelper(3, 15, 0x333344, 0x222233);
+grid.position.y = -0.43;
+scene.add(grid);
+
+// ── Materials ──────────────────────────────────────────────────────────────────
+const MAT = {
+  frame:  new THREE.MeshLambertMaterial({color:0x888888, transparent:true, opacity:0.4}),
+  input:  new THREE.MeshLambertMaterial({color:0x4ecdc4, transparent:true, opacity:0.6}),
+  cross:  new THREE.MeshLambertMaterial({color:0xe94560, transparent:true, opacity:0.6}),
+  output: new THREE.MeshLambertMaterial({color:0xf77f00, transparent:true, opacity:0.6}),
+};
+const EDGE_MAT = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.5});
+
+function makeTechMesh(geo, mat) {
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo,25), EDGE_MAT));
+  return mesh;
+}
+
+// ── Frame (body 1) ─────────────────────────────────────────────────────────────
+const frameGroup = new THREE.Group();
+
+const basePlate = makeTechMesh(new THREE.BoxGeometry(2.2, 0.05, 1.5), MAT.frame);
+basePlate.position.y = -0.405;
+frameGroup.add(basePlate);
+
+const inputBearing = makeTechMesh(new THREE.BoxGeometry(0.18, 0.55, 0.28), MAT.frame);
+inputBearing.position.set(-0.55, -0.105, 0);
+frameGroup.add(inputBearing);
+
+const outputBearing = makeTechMesh(new THREE.BoxGeometry(0.18, 0.55, 0.28), MAT.frame);
+frameGroup.add(outputBearing);
+scene.add(frameGroup);
+
+function updateFrameAlpha() {
+  const ca=Math.cos(alpha), sa=Math.sin(alpha);
+  outputBearing.position.set(0.55*ca, -0.105, 0.55*sa);
+  outputBearing.rotation.y = -alpha;
+}
+updateFrameAlpha();
+
+// ── Input shaft (body 2) ───────────────────────────────────────────────────────
+const inputShaftGroup = new THREE.Group();
+
+// Shaft: ends at x=-0.20, does not reach origin
+const inShaft = makeTechMesh(new THREE.CylinderGeometry(0.06,0.06,0.60,12), MAT.input);
+inShaft.rotation.z = -Math.PI/2;
+inShaft.position.x = -0.52;
+inputShaftGroup.add(inShaft);
+
+// Disc (flange connecting shaft to yoke prongs)
+const inDisc = makeTechMesh(new THREE.CylinderGeometry(0.18,0.18,0.035,16), MAT.input);
+inDisc.rotation.z = -Math.PI/2;
+inDisc.position.x = -0.20;
+inputShaftGroup.add(inDisc);
+
+// Yoke prongs: two plates at y=±0.15, extending from disc toward center
+const inProng1 = makeTechMesh(new THREE.BoxGeometry(0.25, 0.025, 0.08), MAT.input);
+inProng1.position.set(-0.08, 0.15, 0);
+inputShaftGroup.add(inProng1);
+const inProng2 = makeTechMesh(new THREE.BoxGeometry(0.25, 0.025, 0.08), MAT.input);
+inProng2.position.set(-0.07, -0.15, 0);
+inputShaftGroup.add(inProng2);
+
+scene.add(inputShaftGroup);
+
+// ── Cross (body 3) ─────────────────────────────────────────────────────────────
+const crossGroup = new THREE.Group();
+
+// Thinner arms, longer reach
+const arm1 = makeTechMesh(new THREE.CylinderGeometry(0.025,0.025,0.38,12), MAT.cross);
+crossGroup.add(arm1); // along local Y = mu
+
+const arm2 = makeTechMesh(new THREE.CylinderGeometry(0.025,0.025,0.38,12), MAT.cross);
+arm2.rotation.x = Math.PI/2; // along local Z = nu
+crossGroup.add(arm2);
+
+// Cross triad: c1=mu(localY), c2=nu(localZ), c3=w=mu×nu(localX)
+const triadGroup = new THREE.Group();
+const c1Arrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), 0.38, 0xff4444, 0.06, 0.03);
+const c2Arrow = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 0.38, 0x44cc44, 0.06, 0.03);
+const c3Arrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 0.38, 0x4488ff, 0.06, 0.03);
+triadGroup.add(c1Arrow, c2Arrow, c3Arrow);
+crossGroup.add(triadGroup);
+
+scene.add(crossGroup);
+
+// ── Output shaft (body 4) ──────────────────────────────────────────────────────
+const outputPivotGroup = new THREE.Group();
+const outputShaftGroup = new THREE.Group();
+
+// Shaft: starts at x=+0.20, does not reach origin
+const outShaft = makeTechMesh(new THREE.CylinderGeometry(0.06,0.06,0.60,12), MAT.output);
+outShaft.rotation.z = -Math.PI/2;
+outShaft.position.x = 0.52;
+outputShaftGroup.add(outShaft);
+
+// Disc (flange)
+const outDisc = makeTechMesh(new THREE.CylinderGeometry(0.18,0.18,0.035,24), MAT.output);
+outDisc.rotation.z = -Math.PI/2;
+outDisc.position.x = 0.20;
+outputShaftGroup.add(outDisc);
+
+//const inProng1 = makeTechMesh(new THREE.BoxGeometry(0.25, 0.025, 0.08), MAT.input);
+//inProng1.position.set(-0.08, 0.15, 0);
+// Yoke prongs: two plates at z=±0.15, extending from disc toward center
+const outProng1 = makeTechMesh(new THREE.BoxGeometry(0.25, 0.08, 0.025), MAT.output);
+outProng1.position.set(0.08, 0, 0.15);
+outputShaftGroup.add(outProng1);
+const outProng2 = makeTechMesh(new THREE.BoxGeometry(0.25, 0.08, 0.025), MAT.output);
+outProng2.position.set(0.08, 0, -0.15);
+outputShaftGroup.add(outProng2);
+
+outputPivotGroup.add(outputShaftGroup);
+outputPivotGroup.rotation.y = -alpha;
+scene.add(outputPivotGroup);
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const helpersGroup = new THREE.Group();
+
+// Rotation axes (i, i_c)
+const inputAxisArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(1,0,0), new THREE.Vector3(-1.0,0,0), 2.2, 0x4ecdc4, 0.08, 0.04);
+helpersGroup.add(inputAxisArrow);
+
+const outputAxisArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 1.2, 0xf77f00, 0.08, 0.04);
+helpersGroup.add(outputAxisArrow);
+
+// Fixed frame triad {i, j, k} — white
+const fixedFrameGroup = new THREE.Group();
+const FLEN = 0.40;
+fixedFrameGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), FLEN, 0xffffff, 0.05, 0.025));
+fixedFrameGroup.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), FLEN, 0xffffff, 0.05, 0.025));
+fixedFrameGroup.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), FLEN, 0xffffff, 0.05, 0.025));
+fixedFrameGroup.visible = false;
+scene.add(fixedFrameGroup);
+
+// 270° rotation indicator arrows around i₂ and i₄
+function makeRotArrow(axis, refVec, offset, radius, color, arcAngle) {
+  const grp = new THREE.Group();
+  const N = 64;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * arcAngle;
+    pts.push(refVec.clone().applyAxisAngle(axis, t).multiplyScalar(radius));
+  }
+  grp.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color })
+  ));
+  // Arrowhead cone at end of arc
+  const endDir = refVec.clone().applyAxisAngle(axis, arcAngle).normalize();
+  const tangent = new THREE.Vector3().crossVectors(axis, endDir).normalize();
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(0.025, 0.07, 8),
+    new THREE.MeshLambertMaterial({ color })
+  );
+  cone.position.copy(endDir.clone().multiplyScalar(radius));
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tangent);
+  grp.add(cone);
+  grp.position.copy(offset);
+  return grp;
+}
+
+const ROT_ARC = 1.5 * Math.PI; // 270°
+const ROT_R = 0.17;
+
+// Input: just before input bearing (bearing center x=-0.55)
+const inputRotArrow = makeRotArrow(
+  new THREE.Vector3(1,0,0), new THREE.Vector3(0,1,0),
+  new THREE.Vector3(-0.72, 0, 0), ROT_R, 0x4ecdc4, ROT_ARC
+);
+helpersGroup.add(inputRotArrow);
+
+// Output: just after output bearing, in a pivot that tilts with α
+const outputRotPivot = new THREE.Group();
+const outputRotArrow = makeRotArrow(
+  new THREE.Vector3(1,0,0), new THREE.Vector3(0,1,0),
+  new THREE.Vector3(0.72, 0, 0), ROT_R, 0xf77f00, ROT_ARC
+);
+outputRotPivot.add(outputRotArrow);
+outputRotPivot.rotation.y = -alpha;
+helpersGroup.add(outputRotPivot);
+
+// Trace curves: orbits of c₁, c₂, c₃ tips over one full revolution
+const TRACE_N = 120;
+const TRACE_R = 0.38; // matches triad arrow length
+let traceLine1, traceLine2, traceLine3;
+const tracesGroup = new THREE.Group();
+tracesGroup.visible = false;
+
+function buildTraces() {
+  // Remove old traces
+  while (tracesGroup.children.length) tracesGroup.remove(tracesGroup.children[0]);
+
+  const ca = Math.cos(alpha), sa = Math.sin(alpha);
+  const c1P = [], c2P = [], c3P = [];
+
+  for (let i = 0; i <= TRACE_N; i++) {
+    const p2 = (i / TRACE_N) * 2 * Math.PI;
+    const p4 = Math.atan2(ca * Math.sin(p2), Math.cos(p2));
+
+    // mu (local Y of cross)
+    const mx = 0, my = Math.cos(p2), mz = Math.sin(p2);
+    c1P.push(new THREE.Vector3(mx * TRACE_R, my * TRACE_R, mz * TRACE_R));
+
+    // nu (local Z of cross)
+    const nx = -Math.cos(p4)*sa, ny = -Math.sin(p4), nz = Math.cos(p4)*ca;
+    c2P.push(new THREE.Vector3(nx * TRACE_R, ny * TRACE_R, nz * TRACE_R));
+
+    // w = mu × nu (local X of cross)
+    const wx = my*nz - mz*ny, wy = mz*nx - mx*nz, wz = mx*ny - my*nx;
+    const wl = Math.sqrt(wx*wx + wy*wy + wz*wz) || 1;
+    c3P.push(new THREE.Vector3(wx/wl*TRACE_R, wy/wl*TRACE_R, wz/wl*TRACE_R));
+  }
+
+  traceLine1 = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(c1P),
+    new THREE.LineBasicMaterial({ color: 0xff4444 })
+  );
+  traceLine2 = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(c2P),
+    new THREE.LineBasicMaterial({ color: 0x44cc44 })
+  );
+  traceLine3 = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(c3P),
+    new THREE.LineBasicMaterial({ color: 0x4488ff })
+  );
+  tracesGroup.add(traceLine1, traceLine2, traceLine3);
+}
+buildTraces();
+scene.add(tracesGroup);
+
+scene.add(helpersGroup);
+
+// ── Visibility ─────────────────────────────────────────────────────────────────
+function updateVisibility() {
+  frameGroup.visible = document.getElementById('show-frame').checked;
+  const sa = document.getElementById('show-axes').checked;
+  inputAxisArrow.visible = sa;
+  outputAxisArrow.visible = sa;
+  fixedFrameGroup.visible = document.getElementById('show-fixed-frame').checked;
+  triadGroup.visible = document.getElementById('show-versors').checked;
+  tracesGroup.visible = document.getElementById('show-traces').checked;
+  const sr = document.getElementById('show-rot-arrows').checked;
+  inputRotArrow.visible = sr;
+  outputRotPivot.visible = sr;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  UPDATE SCENE (core kinematic coupling)
+// ══════════════════════════════════════════════════════════════════════════════
+function updateScene(phi2) {
+  const { phi4 } = kinematic(phi2, alpha);
+  const ca = Math.cos(alpha), sa = Math.sin(alpha);
+  currentPhi2 = phi2;
+
+  // Body 2: input shaft rotates around X
+  inputShaftGroup.rotation.x = phi2;
+
+  // Body 4: output pivot tilts, output shaft rotates around local X = i_c
+  outputPivotGroup.rotation.y = -alpha;
+  outputShaftGroup.rotation.x = phi4;
+
+  // Body 3: cross orientation from basis [w | mu | nu]
+  // mu rotates with input shaft around X, starting from Y
+  const mu = new THREE.Vector3(0, Math.cos(phi2), Math.sin(phi2));
+  // nu rotates with output shaft around i_c, starting from e=(-sa,0,ca)
+  const nu = new THREE.Vector3(-Math.cos(phi4)*sa, -Math.sin(phi4), Math.cos(phi4)*ca);
+  const w  = new THREE.Vector3().crossVectors(mu, nu).normalize();
+  crossGroup.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(w, mu, nu));
+
+  // Helpers
+  outputAxisArrow.setDirection(new THREE.Vector3(ca, 0, sa));
+
+  // Rotation indicator arrows spin with shafts
+  inputRotArrow.rotation.x = phi2;
+  outputRotPivot.rotation.y = -alpha;
+  outputRotArrow.rotation.x = phi4;
+}
+
+// ── Render helpers ─────────────────────────────────────────────────────────────
+function renderOnce() { renderer.render(scene, camera); }
+function renderAll() {
+  updateVisibility();
+  renderer.render(scene, camera);
+  drawAllPlots();
+  updateInfoBox();
+}
+
+// ── Animation ──────────────────────────────────────────────────────────────────
+function startAnim() {
+  if(animState.running) return;
+  animState.running = true;
+  animState.lastTs = performance.now();
+  document.getElementById('phi2-slider').disabled = true;
+  requestAnimationFrame(animStep);
+}
+function animStep(now) {
+  if(!animState.running) return;
+  const dt = Math.min((now - animState.lastTs)/1000, 0.05);
+  animState.lastTs = now;
+
+  animState.phi2 += omega2 * speed * dt;
+  if(animState.phi2 >= 2*Math.PI) animState.phi2 -= 2*Math.PI;
+  animState.time += dt * speed;
+
+  updateScene(animState.phi2);
+  recordHist();
+  updateVisibility();
+  renderer.render(scene, camera);
+  drawAllPlots();
+  updateInfoBox();
+
+  const deg = (animState.phi2*180/Math.PI);
+  document.getElementById('phi2-slider').value = deg.toFixed(0);
+  document.getElementById('phi2-val').textContent = deg.toFixed(0)+'°';
+
+  requestAnimationFrame(animStep);
+}
+function stopAnim() {
+  animState.running = false;
+  document.getElementById('phi2-slider').disabled = false;
+}
+function resetAnim() {
+  stopAnim();
+  animState.phi2 = 0; animState.time = 0; hist = [];
+  document.getElementById('phi2-slider').value = 0;
+  document.getElementById('phi2-val').textContent = '0°';
+  updateScene(0);
+  renderAll();
+}
+function recordHist() {
+  const { phi4, tau } = kinematic(animState.phi2, alpha);
+  let p4 = phi4; if(p4<0) p4+=2*Math.PI;
+  hist.push({ t:animState.time, phi2:animState.phi2, phi4:p4, tau });
+  if(hist.length > MAX_HIST) hist.shift();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  2D PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+function drawGridOnCanvas(c, W, H, pad, view, xTicks, yTicks) {
+  c.font='9px sans-serif';
+  for(const {v,l} of xTicks){
+    const x=view.toX(v,pad,W); if(x<pad.l||x>W-pad.r) continue;
+    c.beginPath(); c.moveTo(x,pad.t); c.lineTo(x,H-pad.b);
+    c.strokeStyle='rgba(255,255,255,0.07)'; c.lineWidth=1; c.stroke();
+    c.fillStyle='#888'; c.textAlign='center'; c.fillText(l,x,H-4);
+  }
+  c.textAlign='left';
+  for(const {v,l} of yTicks){
+    const y=view.toY(v,pad,H); if(y<pad.t||y>H-pad.b) continue;
+    c.beginPath(); c.moveTo(pad.l,y); c.lineTo(W-pad.r,y);
+    c.strokeStyle=Math.abs(v)<1e-9?'rgba(255,255,255,0.15)':'rgba(255,255,255,0.06)';
+    c.lineWidth=1; c.stroke();
+    c.fillStyle='#888'; c.textAlign='right'; c.fillText(l,pad.l-3,y+3);
+  }
+  c.textAlign='left';
+  c.strokeStyle='rgba(255,255,255,0.2)'; c.lineWidth=1;
+  c.beginPath(); c.moveTo(pad.l,pad.t); c.lineTo(pad.l,H-pad.b); c.lineTo(W-pad.r,H-pad.b); c.stroke();
+}
+
+function degTicksX(view) {
+  return niceTicks(view.xMin*180/Math.PI, view.xMax*180/Math.PI, 5)
+    .map(d=>({v:d*Math.PI/180, l:d.toFixed(0)+'°'}));
+}
+function numTicksY(view) {
+  return niceTicks(view.yMin, view.yMax, 5)
+    .map(v=>({v, l:Math.abs(v)<1e-9?'0':v.toFixed(v<10?2:1)}));
+}
+// ── τ(φ₂) ──────────────────────────────────────────────────────────────────────
+function drawTauPlot() {
+  const cv=document.getElementById('tau-canvas'), c=cv.getContext('2d');
+  const W=cv.width, H=cv.height, pad=PAD;
+  const ca=Math.cos(alpha), sa=Math.sin(alpha);
+  const tMax=1/ca, tMin=ca;
+  tauView.setRange(0, 2*Math.PI, Math.min(tMin-0.1,0.5), Math.max(tMax+0.1,1.5));
+
+  c.clearRect(0,0,W,H);
+  drawGridOnCanvas(c,W,H,pad,tauView, degTicksX(tauView), numTicksY(tauView));
+
+  // Reference lines
+  function hline(yv, col, lbl) {
+    const y=tauView.toY(yv,pad,H);
+    if(y<pad.t||y>H-pad.b) return;
+    c.beginPath(); c.moveTo(pad.l,y); c.lineTo(W-pad.r,y);
+    c.strokeStyle=col; c.lineWidth=1; c.setLineDash([4,4]); c.stroke(); c.setLineDash([]);
+    if(lbl) mimg(c,lbl,W-pad.r-32,y-14);
+  }
+  hline(1, 'rgba(255,255,255,0.2)', 'tau1_lbl');
+  hline(tMax, 'rgba(233,69,96,0.5)', 'tmax_lbl');
+  hline(tMin, 'rgba(6,214,160,0.5)', 'tmin_lbl');
+
+  // τ curve
+  const N=300;
+  c.beginPath();
+  for(let i=0;i<=N;i++){
+    const p2=tauView.xMin+i*(tauView.xMax-tauView.xMin)/N;
+    const s2=Math.sin(p2);
+    const tau=ca/(1-sa*sa*s2*s2);
+    const x=tauView.toX(p2,pad,W), y=tauView.toY(tau,pad,H);
+    i===0?c.moveTo(x,y):c.lineTo(x,y);
+  }
+  c.strokeStyle='#4ecdc4'; c.lineWidth=2; c.stroke();
+
+  // Operating point
+  let pp2=currentPhi2%(2*Math.PI); if(pp2<0)pp2+=2*Math.PI;
+  const { tau }=kinematic(currentPhi2,alpha);
+  const cx=tauView.toX(pp2,pad,W), cy=tauView.toY(tau,pad,H);
+  if(cx>=pad.l&&cx<=W-pad.r&&cy>=pad.t&&cy<=H-pad.b){
+    c.beginPath(); c.arc(cx,cy,5,0,2*Math.PI);
+    c.fillStyle='#ffdd57'; c.fill(); c.strokeStyle='#aa8800'; c.lineWidth=1.5; c.stroke();
+  }
+
+  mimg(c,'tau_lbl',2,pad.t+1);
+  mimg(c,'phi2_lbl',W-pad.r-22,H-pad.b+12);
+  if(tauView.active){ c.fillStyle='rgba(233,69,96,0.6)'; c.font='bold 9px sans-serif'; c.fillText('\u{1f512}',W-pad.r-14,pad.t+10); }
+}
+
+// ── Δφ(φ₂) ─────────────────────────────────────────────────────────────────────
+function drawDeltaPlot() {
+  const cv=document.getElementById('delta-canvas'), c=cv.getContext('2d');
+  const W=cv.width, H=cv.height, pad=PAD;
+
+  // Compute max |Δφ| analytically
+  let maxD=0;
+  for(let i=0;i<360;i++){
+    const p2=i*Math.PI/180;
+    const { phi4 }=kinematic(p2,alpha);
+    let d=phi4-p2;
+    d = d - Math.round(d/(2*Math.PI))*2*Math.PI;
+    maxD=Math.max(maxD, Math.abs(d));
+  }
+  const margin=Math.max(maxD*0.25, 0.01);
+  deltaView.setRange(0, 2*Math.PI, -(maxD+margin), maxD+margin);
+
+  c.clearRect(0,0,W,H);
+  drawGridOnCanvas(c,W,H,pad,deltaView, degTicksX(deltaView),
+    niceTicks(deltaView.yMin*180/Math.PI, deltaView.yMax*180/Math.PI, 5)
+      .map(d=>({v:d*Math.PI/180, l:d.toFixed(1)+'°'})));
+
+  // Zero line
+  const y0=deltaView.toY(0,pad,H);
+  if(y0>=pad.t&&y0<=H-pad.b){
+    c.beginPath(); c.moveTo(pad.l,y0); c.lineTo(W-pad.r,y0);
+    c.strokeStyle='rgba(255,255,255,0.15)'; c.lineWidth=1; c.setLineDash([4,4]); c.stroke(); c.setLineDash([]);
+  }
+
+  // Δφ curve
+  const N=300;
+  c.beginPath();
+  for(let i=0;i<=N;i++){
+    const p2=deltaView.xMin+i*(deltaView.xMax-deltaView.xMin)/N;
+    const { phi4 }=kinematic(p2,alpha);
+    let d=phi4-p2;
+    d = d - Math.round(d/(2*Math.PI))*2*Math.PI;
+    const x=deltaView.toX(p2,pad,W), y=deltaView.toY(d,pad,H);
+    i===0?c.moveTo(x,y):c.lineTo(x,y);
+  }
+  c.strokeStyle='#ffdd57'; c.lineWidth=2; c.stroke();
+
+  // Operating point
+  let pp2=currentPhi2%(2*Math.PI); if(pp2<0) pp2+=2*Math.PI;
+  const { phi4 }=kinematic(currentPhi2,alpha);
+  let d=phi4-currentPhi2;
+  d = d - Math.round(d/(2*Math.PI))*2*Math.PI;
+  const cx=deltaView.toX(pp2,pad,W), cy=deltaView.toY(d,pad,H);
+  if(cx>=pad.l&&cx<=W-pad.r&&cy>=pad.t&&cy<=H-pad.b){
+    c.beginPath(); c.arc(cx,cy,5,0,2*Math.PI);
+    c.fillStyle='#ffdd57'; c.fill(); c.strokeStyle='#aa8800'; c.lineWidth=1.5; c.stroke();
+  }
+
+  mimg(c,'dphi_lbl',2,pad.t+1);
+  mimg(c,'phi2_lbl',W-pad.r-22,H-pad.b+12);
+  if(deltaView.active){ c.fillStyle='rgba(233,69,96,0.6)'; c.font='bold 9px sans-serif'; c.fillText('\u{1f512}',W-pad.r-14,pad.t+10); }
+}
+
+function drawAllPlots() { drawTauPlot(); drawDeltaPlot(); }
+
+// ── Info box ───────────────────────────────────────────────────────────────────
+function updateInfoBox() {
+  const { phi4, tau } = kinematic(currentPhi2, alpha);
+  const ca=Math.cos(alpha), sa=Math.sin(alpha);
+  let p2=currentPhi2%(2*Math.PI); if(p2<0) p2+=2*Math.PI;
+  let p4=phi4; if(p4<0) p4+=2*Math.PI;
+  const o4=tau*omega2;
+  const tMax=1/ca, tMin=ca, delta=sa*Math.tan(alpha);
+
+  document.getElementById('info-box').textContent =
+    `\u03b1  = ${(alpha*180/Math.PI).toFixed(1)}\u00b0\n`+
+    `\u03c6\u2082 = ${(p2*180/Math.PI).toFixed(1)}\u00b0 (${p2.toFixed(4)} rad)\n`+
+    `\u03c6\u2084 = ${(p4*180/Math.PI).toFixed(1)}\u00b0 (${p4.toFixed(4)} rad)\n`+
+    `\u03c9\u2082 = ${omega2.toFixed(2)} rad/s\n`+
+    `\u03c9\u2084 = ${o4.toFixed(2)} rad/s\n`+
+    `\u03c4  = ${tau.toFixed(4)}\n`+
+    `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n`+
+    `\u03c4_max = ${tMax.toFixed(4)}\n`+
+    `\u03c4_min = ${tMin.toFixed(4)}\n`+
+    `\u03b4     = ${delta.toFixed(4)}`+
+    (animState.time>0?'\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nt  = '+animState.time.toFixed(3)+' s':'');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  UI WIRING
+// ══════════════════════════════════════════════════════════════════════════════
+function wireSlider(id, valId, fmt, onChange) {
+  const sl=document.getElementById(id), vl=document.getElementById(valId);
+  const upd=()=>{ vl.textContent=fmt(parseFloat(sl.value)); if(onChange)onChange(parseFloat(sl.value)); };
+  sl.addEventListener('input', upd); upd();
+}
+
+wireSlider('alpha-slider','alpha-val', v=>v.toFixed(0)+'°', v=>{
+  alpha=v*Math.PI/180;
+  updateFrameAlpha();
+  buildTraces();
+  if(!animState.running){ updateScene(currentPhi2); renderAll(); }
+});
+wireSlider('omega2-slider','omega2-val', v=>v.toFixed(1), v=>{ omega2=v; });
+wireSlider('phi2-slider','phi2-val', v=>v.toFixed(0)+'°', v=>{
+  if(animState.running) return;
+  animState.phi2=v*Math.PI/180;
+  updateScene(v*Math.PI/180);
+  renderAll();
+});
+wireSlider('speed-slider','speed-val', v=>v.toFixed(1)+'\u00d7', v=>{ speed=v; });
+
+document.querySelectorAll('.checkbox-row input').forEach(cb=>{
+  cb.addEventListener('change',()=>{ updateVisibility(); if(!animState.running) renderOnce(); });
+});
+
+document.getElementById('btn-play').addEventListener('click', ()=>{ stopAnim(); startAnim(); });
+document.getElementById('btn-stop').addEventListener('click', stopAnim);
+document.getElementById('btn-reset').addEventListener('click', resetAnim);
+
+// ── Resize ─────────────────────────────────────────────────────────────────────
+function resizeViewport() {
+  const w=container.clientWidth, h=container.clientHeight;
+  if(w===0||h===0) return;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h);
+}
+window.addEventListener('resize', ()=>{ resizeViewport(); if(!animState.running){ renderOnce(); drawAllPlots(); } });
+
+// ── Collapse + Resizer ─────────────────────────────────────────────────────────
+function setupCollapse(btnId, panelId, openA, closeA) {
+  const btn=document.getElementById(btnId), panel=document.getElementById(panelId);
+  let col=false;
+  btn.addEventListener('mousedown', e=>e.stopPropagation());
+  btn.addEventListener('click', e=>{
+    e.stopPropagation(); col=!col;
+    panel.classList.toggle('collapsed',col);
+    btn.textContent=col?closeA:openA;
+    setTimeout(()=>{ resizeViewport(); if(!animState.running){ renderOnce(); drawAllPlots(); } }, 270);
+  });
+}
+function setupResizer(rzId, panelId, side) {
+  const panel=document.getElementById(panelId), rz=document.getElementById(rzId);
+  let sx, sw;
+  rz.addEventListener('mousedown', e=>{
+    e.preventDefault(); sx=e.clientX; sw=panel.offsetWidth;
+    rz.classList.add('dragging');
+    document.addEventListener('mousemove',onM); document.addEventListener('mouseup',onU);
+  });
+  function onM(e){
+    const d=side==='left'?(e.clientX-sx):(sx-e.clientX);
+    panel.style.width=Math.max(parseInt(getComputedStyle(panel).minWidth)||180,
+      Math.min(sw+d,window.innerWidth*0.45))+'px';
+    resizeViewport(); if(!animState.running){ renderOnce(); drawAllPlots(); }
+  }
+  function onU(){ rz.classList.remove('dragging'); document.removeEventListener('mousemove',onM); document.removeEventListener('mouseup',onU); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════════════════
+async function initApp() {
+  await window._mjReady;
+  await preloadMath();
+  MathJax.typeset();
+
+  setupPanZoom('tau-canvas',    tauView,    PAD, drawTauPlot);
+  setupPanZoom('delta-canvas',  deltaView,  PAD, drawDeltaPlot);
+
+  setupCollapse('left-collapse', 'left-panel', '\u25C0', '\u25B6');
+  setupCollapse('right-collapse','right-panel', '\u25B6', '\u25C0');
+  setupResizer('left-resizer', 'left-panel', 'left');
+  setupResizer('right-resizer','right-panel','right');
+
+  document.querySelectorAll('.section-title.collapsible').forEach(hdr=>{
+    hdr.addEventListener('click',()=>{
+      const body=document.getElementById(hdr.id.replace('hdr-','body-'));
+      const tog=hdr.querySelector('.sec-toggle');
+      body.classList.toggle('collapsed');
+      tog.textContent=body.classList.contains('collapsed')?'\u25B6':'\u25BC';
+    });
+  });
+
+  resizeViewport();
+  updateVisibility();
+  updateScene(0);
+  renderAll();
+}
+initApp();
+</script>
+</body>
+</html>
