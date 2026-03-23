@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strandbeest Simulator — Grip</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #0f0f1a; font-family: 'Segoe UI', system-ui, sans-serif; }
+        canvas { display: block; position: fixed; left: 0; top: 0; }
+
+        #panel {
+            position: absolute; top: 10px; right: 10px; z-index: 10;
+            background: rgba(10,10,25,0.88); color: #ccd; padding: 14px 16px;
+            border-radius: 10px; border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(8px); user-select: none; min-width: 240px;
+            font-size: 12px;
+        }
+        #panel h2 { font-size: 14px; color: #fff; margin-bottom: 3px; font-weight: 600; }
+        #panel .sub { color: #778; font-size: 10px; margin-bottom: 10px; }
+        #panel label { display: flex; align-items: center; gap: 6px; margin: 5px 0; color: #aab; }
+        #panel input[type=range] { flex: 1; accent-color: #5588ff; }
+        #panel .val { min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; color: #8af; font-size: 11px; }
+        .btnrow { display: flex; gap: 6px; margin-top: 10px; }
+        #panel button {
+            flex: 1; padding: 7px 8px; border: none; border-radius: 5px;
+            font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.15s;
+        }
+        #btnPhysics { background: #6c757d; color: #fff; }
+        #btnPhysics.on { background: #2d6a4f; cursor: default; }
+        #btnWalk { background: #1a3a6a; color: #cde; }
+        #btnWalk.on { background: #1a5a3a; }
+        #btnReset { background: #5a4a00; color: #eed; }
+        #btnReset:hover { background: #6a5a10; }
+        #status { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); }
+        #status .line { display: flex; justify-content: space-between; color: #889; font-size: 11px; margin: 2px 0; }
+        #status .line span:last-child { color: #8cf; font-variant-numeric: tabular-nums; }
+        #legend {
+            position: absolute; bottom: 12px; left: 12px; z-index: 10;
+            background: rgba(10,10,25,0.82); color: #99a; padding: 10px 14px;
+            border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(6px); user-select: none; font-size: 11px;
+            line-height: 1.7;
+        }
+        #legend kbd {
+            display: inline-block; background: rgba(255,255,255,0.1); color: #ccd;
+            padding: 1px 6px; border-radius: 3px; font-family: inherit; font-size: 10px;
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+    </style>
+</head>
+<body>
+
+<div id="panel">
+    <h2>Strandbeest Simulator</h2>
+    <div style="color:#aab;font-size:12px;margin-bottom:2px">Prof. Marco Gabiccini 2026</div>
+    <div class="sub">Tutti i diritti riservati</div>
+
+    <label>Speed
+        <input type="range" id="slSpeed" min="-300" max="300" value="50">
+        <span class="val" id="valSpeed">0.50 rps</span>
+    </label>
+    <label>Phase 1
+        <input type="range" id="slPhase1" min="0" max="360" value="120">
+        <span class="val" id="valPhase1">120&deg;</span>
+    </label>
+    <label>Phase 2
+        <input type="range" id="slPhase2" min="0" max="360" value="240">
+        <span class="val" id="valPhase2">240&deg;</span>
+    </label>
+    <label>Kp
+        <input type="range" id="slKp" min="0" max="40" value="20">
+        <span class="val" id="valKp">20</span>
+    </label>
+    <label>Kd
+        <input type="range" id="slKd" min="0" max="30" value="3" step="0.5">
+        <span class="val" id="valKd">3.0</span>
+    </label>
+    <label>&tau; max
+        <input type="range" id="slTau" min="0.5" max="2.5" value="2" step="0.1">
+        <span class="val" id="valTau">2.0</span>
+    </label>
+
+    <div class="btnrow">
+        <button id="btnPhysics">Physics</button>
+        <button id="btnWalk">Walk!</button>
+        <button id="btnReset">Reset!</button>
+    </div>
+
+    <div id="status">
+        <div class="line"><span>Actual</span><span id="valActual">0.00 rps</span></div>
+        <div class="line"><span>Substeps</span><span>3 &times; 60 = 180 Hz</span></div>
+    </div>
+</div>
+
+<div id="legend">
+    <kbd>&rarr;</kbd> Speed + &nbsp; <kbd>&larr;</kbd> Speed &minus; &nbsp; <kbd>Enter</kbd> Walk / Stop &nbsp; <kbd>Space</kbd> Reset
+</div>
+
+<script src="../build/matter.js"></script>
+<script>
+(function() {
+    'use strict';
+
+    var Engine     = Matter.Engine,
+        Events     = Matter.Events,
+        Render     = Matter.Render,
+        Runner     = Matter.Runner,
+        Body       = Matter.Body,
+        Constraint = Matter.Constraint,
+        Composite  = Matter.Composite,
+        MouseConstraint = Matter.MouseConstraint,
+        Mouse      = Matter.Mouse,
+        Bodies     = Matter.Bodies,
+        Vector     = Matter.Vector;
+
+    // ================================================================
+    // PHYSICS CALIBRATION
+    // ================================================================
+    var SUBSTEPS          = 3;
+    var SOLVER_CONSTRAINT = 10;
+    var SOLVER_POSITION   = 10;
+    var SOLVER_VELOCITY   = 6;
+
+    var PIN_STIFFNESS     = 0.7;
+    var PIN_DAMPING       = 0.05;
+    var STRUCT_STIFFNESS  = 0.9;
+    var STRUCT_DAMPING    = 0.02;
+    var STRUCT_ANG_STIFF  = 0.1;
+
+    var CHASSIS_DENSITY   = 0.003;
+    var LINK_DENSITY      = 0.0006;
+    var LINK_FRICTION_AIR = 0.02;
+    var LINK_THICKNESS    = 6;
+
+    var FOOT_RADIUS       = 5;      // foot pad circle radius (px)
+    var FOOT_DENSITY      = 0.001;  // heavier than links for better ground contact
+    var FOOT_FRICTION     = 1.0;    // Coulomb friction — now with real normal force
+
+    var MOTOR_KP          = 20;
+    var MOTOR_KD          = 3.0;
+    var MOTOR_TAU_MAX     = 2.0;
+
+    var MOUSE_STIFFNESS   = 0.2;
+    var MOUSE_DAMPING     = 0.3;
+    var RELEASE_DAMP      = 0.3;
+
+    // ================================================================
+    // Engine
+    // ================================================================
+    var engine = Engine.create();
+    var world  = engine.world;
+
+    engine.gravity.y = 1;
+    engine.constraintIterations = SOLVER_CONSTRAINT;
+    engine.positionIterations   = SOLVER_POSITION;
+    engine.velocityIterations   = SOLVER_VELOCITY;
+
+    var render = Render.create({
+        element: document.body,
+        engine: engine,
+        options: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            wireframes: false,
+            background: '#0f0f1a'
+        }
+    });
+    render.canvas.style.display = 'block';
+    render.canvas.style.position = 'fixed';
+    render.canvas.style.left = '0';
+    render.canvas.style.top = '0';
+    Render.run(render);
+
+    var runner = Runner.create({
+        delta: 1000 / (60 * SUBSTEPS),
+        maxFrameTime: 1000 / 50
+    });
+
+    // ================================================================
+    // Theo Jansen linkage
+    // ================================================================
+    var L = {
+        m: 15.0, j: 50.0, b: 41.5, k: 61.9, c: 39.3,
+        e: 55.8, d: 40.1, g: 36.7, f: 39.4, h: 67.5,
+        i: 49.0, a: 38.0, l: 7.8
+    };
+
+    var S  = 2;
+    var TX = 800 + 150 * S;
+    var GROUND_H = 60;
+    var TY = window.innerHeight - GROUND_H - 180;
+
+    function toScreen(ux, uy) {
+        return { x: ux * S + TX, y: -uy * S + TY };
+    }
+
+    function angleOf(p1, p2) {
+        return Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    }
+
+    // ================================================================
+    // Kinematics
+    // ================================================================
+    function cci(p1, r1, p2, r2, sign) {
+        var dx = p2.x - p1.x, dy = p2.y - p1.y;
+        var d  = Math.sqrt(dx * dx + dy * dy);
+        var a  = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+        var h  = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+        var mx = p1.x + a * dx / d;
+        var my = p1.y + a * dy / d;
+        return { x: mx + sign * h * dy / d, y: my - sign * h * dx / d };
+    }
+
+    function solveLeftLeg(theta) {
+        var O1 = { x: 0, y: 0 };
+        var O2 = { x: L.a, y: L.l };
+        var A  = { x: O2.x + L.m * Math.cos(theta), y: O2.y + L.m * Math.sin(theta) };
+        var B  = cci(A, L.j, O1, L.b, 1);
+        var C  = cci(A, L.k, O1, L.c, -1);
+        var D  = cci(B, L.e, O1, L.d, 1);
+        var E  = cci(C, L.g, D, L.f, -1);
+        var F  = cci(E, L.h, C, L.i, 1);
+        return { O1: O1, O2: O2, A: A, B: B, C: C, D: D, E: E, F: F };
+    }
+
+    function solveMirrorLeg(theta) {
+        var O1m = { x: 2 * L.a, y: 0 };
+        var O2  = { x: L.a, y: L.l };
+        var A   = { x: O2.x + L.m * Math.cos(theta), y: O2.y + L.m * Math.sin(theta) };
+        var B   = cci(A, L.j, O1m, L.b, -1);
+        var C   = cci(A, L.k, O1m, L.c, 1);
+        var D   = cci(B, L.e, O1m, L.d, -1);
+        var E   = cci(C, L.g, D, L.f, 1);
+        var F   = cci(E, L.h, C, L.i, -1);
+        return { O1m: O1m, A: A, B: B, C: C, D: D, E: E, F: F };
+    }
+
+    // ================================================================
+    // Screen pivots
+    // ================================================================
+    var O1_scr  = toScreen(0, 0);
+    var O2_scr  = toScreen(L.a, L.l);
+    var O1m_scr = toScreen(2 * L.a, 0);
+
+    // ================================================================
+    // Collision
+    // ================================================================
+    var CAT_MOUSE   = 0x0001;
+    var CAT_GROUND  = Body.nextCategory();
+    var CAT_CHASSIS = Body.nextCategory();
+    var CAT_LINK    = Body.nextCategory();
+    var CAT_FOOT    = Body.nextCategory();
+    var CAT_OBS     = Body.nextCategory();
+
+    function cf(cat, mask, group) {
+        return { category: cat, mask: mask, group: group || 0 };
+    }
+
+    var mechGroup = Body.nextGroup(true);
+
+    // ================================================================
+    // Helpers
+    // ================================================================
+    function toLocal(body, wp) {
+        var dx = wp.x - body.position.x, dy = wp.y - body.position.y;
+        var c = Math.cos(-body.angle), s = Math.sin(-body.angle);
+        return { x: dx * c - dy * s, y: dx * s + dy * c };
+    }
+
+    function toWorld(body, lp) {
+        var c = Math.cos(body.angle), s = Math.sin(body.angle);
+        return {
+            x: body.position.x + lp.x * c - lp.y * s,
+            y: body.position.y + lp.x * s + lp.y * c
+        };
+    }
+
+    // ================================================================
+    // Chassis
+    // ================================================================
+    var chassisW = Math.abs(O1m_scr.x - O1_scr.x) + 70;
+    var chassisH = 55;
+    var chassisPos = {
+        x: (O1_scr.x + O1m_scr.x) / 2,
+        y: Math.min(O1_scr.y, O2_scr.y) - 10
+    };
+
+    var chassis = Bodies.rectangle(chassisPos.x, chassisPos.y, chassisW, chassisH, {
+        label: 'chassis',
+        density: CHASSIS_DENSITY,
+        friction: 0.6,
+        frictionAir: 0.02,
+        restitution: 0.05,
+        chamfer: { radius: 6 },
+        collisionFilter: cf(CAT_CHASSIS, CAT_GROUND | CAT_MOUSE | CAT_OBS, mechGroup),
+        render: { fillStyle: '#3a3e4a', strokeStyle: '#8890a4', lineWidth: 1.5 }
+    });
+
+    var ch_O1  = toLocal(chassis, O1_scr);
+    var ch_O2  = toLocal(chassis, O2_scr);
+    var ch_O1m = toLocal(chassis, O1m_scr);
+
+    // ================================================================
+    // Body factories
+    // ================================================================
+    function makeLinkBody(label, pA, pB, color) {
+        var dx = pB.x - pA.x, dy = pB.y - pA.y;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        var cx = (pA.x + pB.x) / 2, cy = (pA.y + pB.y) / 2;
+
+        var body = Bodies.rectangle(cx, cy, len, LINK_THICKNESS, {
+            label: label,
+            density: LINK_DENSITY,
+            friction: 2.0,
+            frictionAir: LINK_FRICTION_AIR,
+            restitution: 0.02,
+            chamfer: { radius: 2 },
+            collisionFilter: cf(CAT_LINK, CAT_GROUND | CAT_MOUSE | CAT_OBS, mechGroup),
+            render: { fillStyle: color, strokeStyle: '#222', lineWidth: 1 }
+        });
+
+        Body.setAngle(body, angleOf(pA, pB));
+        body._halfLen = len / 2;
+        body._startLocal = { x: pA.x - cx, y: pA.y - cy };
+        body._endLocal   = { x: pB.x - cx, y: pB.y - cy };
+        return body;
+    }
+
+    function makeTriBody(label, p1, p2, p3, keys, color) {
+        var cx = (p1.x + p2.x + p3.x) / 3;
+        var cy = (p1.y + p2.y + p3.y) / 3;
+
+        var fill = color;
+        if (color[0] === '#' && color.length === 7) {
+            fill = 'rgba(' +
+                parseInt(color.slice(1,3),16) + ',' +
+                parseInt(color.slice(3,5),16) + ',' +
+                parseInt(color.slice(5,7),16) + ',0.6)';
+        }
+
+        var body = Bodies.fromVertices(cx, cy, [[
+            { x: p1.x, y: p1.y },
+            { x: p2.x, y: p2.y },
+            { x: p3.x, y: p3.y }
+        ]], {
+            label: label,
+            density: LINK_DENSITY,
+            friction: 2.0,
+            frictionAir: LINK_FRICTION_AIR,
+            restitution: 0.02,
+            collisionFilter: cf(CAT_LINK, CAT_GROUND | CAT_MOUSE | CAT_OBS, mechGroup),
+            render: { fillStyle: fill, strokeStyle: '#222', lineWidth: 1 }
+        });
+
+        body[keys[0]] = { x: p1.x - body.position.x, y: p1.y - body.position.y };
+        body[keys[1]] = { x: p2.x - body.position.x, y: p2.y - body.position.y };
+        body[keys[2]] = { x: p3.x - body.position.x, y: p3.y - body.position.y };
+        body._edgeAngle0 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        return body;
+    }
+
+    // Foot pad: small circle pinned to triangle at vertex F.
+    // Circle gives a proper contact surface → real normal force → real friction.
+    function makeFootPad(label, pos) {
+        return Bodies.circle(pos.x, pos.y, FOOT_RADIUS, {
+            label: label,
+            density: FOOT_DENSITY,
+            friction: FOOT_FRICTION,
+            frictionAir: 0.01,
+            restitution: 0.0,
+            collisionFilter: cf(CAT_FOOT, CAT_GROUND | CAT_OBS | CAT_MOUSE, mechGroup),
+            render: { fillStyle: '#ff6644', strokeStyle: '#aa3322', lineWidth: 1 }
+        });
+    }
+
+    function linkEnd(body, sign) {
+        var c = Math.cos(body.angle), s = Math.sin(body.angle);
+        return {
+            x: body.position.x + sign * body._halfLen * c,
+            y: body.position.y + sign * body._halfLen * s
+        };
+    }
+
+    // ================================================================
+    // Pin joints
+    // ================================================================
+    function pin(bodyA, ptA, bodyB, ptB) {
+        return Constraint.create({
+            bodyA: bodyA, pointA: Vector.clone(ptA),
+            bodyB: bodyB, pointB: Vector.clone(ptB),
+            length: 0, stiffness: PIN_STIFFNESS, damping: PIN_DAMPING,
+            render: { visible: false }
+        });
+    }
+
+    function pinStruct(bodyA, ptA, bodyB, ptB) {
+        return Constraint.create({
+            bodyA: bodyA, pointA: Vector.clone(ptA),
+            bodyB: bodyB, pointB: Vector.clone(ptB),
+            length: 0, stiffness: STRUCT_STIFFNESS, damping: STRUCT_DAMPING,
+            angularStiffness: STRUCT_ANG_STIFF,
+            render: { visible: false }
+        });
+    }
+
+    // ================================================================
+    // Pose helpers
+    // ================================================================
+    function poseLinkBody(body, pA, pB) {
+        Body.setPosition(body, { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 });
+        Body.setAngle(body, angleOf(pA, pB));
+        Body.setVelocity(body, { x: 0, y: 0 });
+        Body.setAngularVelocity(body, 0);
+    }
+
+    function poseTriBody(body, p1, p2, p3) {
+        var ea = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        Body.setPosition(body, { x: (p1.x + p2.x + p3.x) / 3, y: (p1.y + p2.y + p3.y) / 3 });
+        Body.setAngle(body, ea - body._edgeAngle0);
+        Body.setVelocity(body, { x: 0, y: 0 });
+        Body.setAngularVelocity(body, 0);
+    }
+
+    function poseCircle(body, pos) {
+        Body.setPosition(body, pos);
+        Body.setAngle(body, 0);
+        Body.setVelocity(body, { x: 0, y: 0 });
+        Body.setAngularVelocity(body, 0);
+    }
+
+    // ================================================================
+    // Colors
+    // ================================================================
+    var COLORS = [
+        { crank:'#e6b800', j:'#33dd55', bd:'#ff8800', k:'#22cccc', c:'#cc44cc', f:'#99dd44', cef:'#dd66aa' },
+        { crank:'#cc9900', j:'#2299dd', bd:'#dd7722', k:'#2299bb', c:'#9944bb', f:'#77bb44', cef:'#bb5599' },
+        { crank:'#ddaa22', j:'#44bb77', bd:'#ee7744', k:'#33bbaa', c:'#bb44aa', f:'#88cc33', cef:'#cc5588' }
+    ];
+    var TRAIL_COLORS = [
+        { left: '255,80,80',  right: '255,50,136' },
+        { left: '80,130,255', right: '50,136,255' },
+        { left: '80,220,80',  right: '50,200,136' }
+    ];
+
+    // ================================================================
+    // Mechanism set factory
+    // ================================================================
+    function createSet(idx, phase) {
+        var col = COLORS[idx];
+        var lk  = solveLeftLeg(phase);
+        var mk  = solveMirrorLeg(phase);
+
+        var O2s = toScreen(lk.O2.x, lk.O2.y);
+        var As  = toScreen(lk.A.x, lk.A.y);
+        var Bs  = toScreen(lk.B.x, lk.B.y);
+        var Cs  = toScreen(lk.C.x, lk.C.y);
+        var Ds  = toScreen(lk.D.x, lk.D.y);
+        var Es  = toScreen(lk.E.x, lk.E.y);
+        var Fs  = toScreen(lk.F.x, lk.F.y);
+        var Bm  = toScreen(mk.B.x, mk.B.y);
+        var Cm  = toScreen(mk.C.x, mk.C.y);
+        var Dm  = toScreen(mk.D.x, mk.D.y);
+        var Em  = toScreen(mk.E.x, mk.E.y);
+        var Fm  = toScreen(mk.F.x, mk.F.y);
+
+        var crank = makeLinkBody('crank_'+idx, O2s, As, col.crank);
+
+        var j   = makeLinkBody('j_'+idx, As, Bs, col.j);
+        var bd  = makeTriBody('bd_'+idx, O1_scr, Bs, Ds, ['vO1','vB','vD'], col.bd);
+        var k   = makeLinkBody('k_'+idx, As, Cs, col.k);
+        var c   = makeLinkBody('c_'+idx, O1_scr, Cs, col.c);
+        var f   = makeLinkBody('f_'+idx, Ds, Es, col.f);
+        var cef = makeTriBody('cef_'+idx, Cs, Es, Fs, ['vC','vE','vF'], col.cef);
+
+        var jm   = makeLinkBody('jm_'+idx, As, Bm, col.j);
+        var bdm  = makeTriBody('bdm_'+idx, O1m_scr, Bm, Dm, ['vO1','vB','vD'], col.bd);
+        var km   = makeLinkBody('km_'+idx, As, Cm, col.k);
+        var cm   = makeLinkBody('cm_'+idx, O1m_scr, Cm, col.c);
+        var fm   = makeLinkBody('fm_'+idx, Dm, Em, col.f);
+        var cefm = makeTriBody('cefm_'+idx, Cm, Em, Fm, ['vC','vE','vF'], col.cef);
+
+        // Foot pads — circles at F vertices for real ground contact
+        var footL = makeFootPad('footL_'+idx, Fs);
+        var footR = makeFootPad('footR_'+idx, Fm);
+
+        // Structural pins (chassis pivots)
+        var jt_O2    = pinStruct(chassis, ch_O2, crank, crank._startLocal);
+        var jt_O1bd  = pinStruct(chassis, ch_O1, bd, bd.vO1);
+        var jt_O1c   = pinStruct(chassis, ch_O1, c, c._startLocal);
+        var jt_O1bdm = pinStruct(chassis, ch_O1m, bdm, bdm.vO1);
+        var jt_O1cm  = pinStruct(chassis, ch_O1m, cm, cm._startLocal);
+
+        // Standard pins (internal joints)
+        var jt_Aj   = pin(crank, crank._endLocal, j, j._startLocal);
+        var jt_B    = pin(j, j._endLocal, bd, bd.vB);
+        var jt_Ak   = pin(crank, crank._endLocal, k, k._startLocal);
+        var jt_C    = pin(k, k._endLocal, c, c._endLocal);
+        var jt_D    = pin(bd, bd.vD, f, f._startLocal);
+        var jt_E    = pin(f, f._endLocal, cef, cef.vE);
+        var jt_Ccef = pin(c, c._endLocal, cef, cef.vC);
+
+        var jt_Ajm   = pin(crank, crank._endLocal, jm, jm._startLocal);
+        var jt_Bm    = pin(jm, jm._endLocal, bdm, bdm.vB);
+        var jt_Akm   = pin(crank, crank._endLocal, km, km._startLocal);
+        var jt_Cm    = pin(km, km._endLocal, cm, cm._endLocal);
+        var jt_Dm    = pin(bdm, bdm.vD, fm, fm._startLocal);
+        var jt_Em    = pin(fm, fm._endLocal, cefm, cefm.vE);
+        var jt_Ccefm = pin(cm, cm._endLocal, cefm, cefm.vC);
+
+        // Foot pad pins: triangle vF → foot pad center
+        var jt_footL = pin(cef,  cef.vF,  footL, { x: 0, y: 0 });
+        var jt_footR = pin(cefm, cefm.vF, footR, { x: 0, y: 0 });
+
+        var bodies = [crank, j, bd, k, c, f, cef, jm, bdm, km, cm, fm, cefm, footL, footR];
+        var joints = [
+            jt_O2, jt_Aj, jt_B, jt_O1bd, jt_Ak, jt_O1c, jt_C, jt_D, jt_E, jt_Ccef,
+            jt_Ajm, jt_Bm, jt_O1bdm, jt_Akm, jt_O1cm, jt_Cm, jt_Dm, jt_Em, jt_Ccefm,
+            jt_footL, jt_footR
+        ];
+
+        return {
+            idx: idx, crank: crank,
+            j: j, bd: bd, k: k, c: c, f: f, cef: cef,
+            jm: jm, bdm: bdm, km: km, cm: cm, fm: fm, cefm: cefm,
+            footL: footL, footR: footR,
+            bodies: bodies, joints: joints,
+            trails: { L: [], R: [] },
+            pid: { prevError: 0, rps: 0, rpsSmooth: 0 },
+
+            assemble: function(ph) {
+                var lk2 = solveLeftLeg(ph);
+                var mk2 = solveMirrorLeg(ph);
+                var O2s2 = toScreen(lk2.O2.x, lk2.O2.y);
+                var As2  = toScreen(lk2.A.x, lk2.A.y);
+                var Bs2  = toScreen(lk2.B.x, lk2.B.y);
+                var Cs2  = toScreen(lk2.C.x, lk2.C.y);
+                var Ds2  = toScreen(lk2.D.x, lk2.D.y);
+                var Es2  = toScreen(lk2.E.x, lk2.E.y);
+                var Fs2  = toScreen(lk2.F.x, lk2.F.y);
+                var Bm2  = toScreen(mk2.B.x, mk2.B.y);
+                var Cm2  = toScreen(mk2.C.x, mk2.C.y);
+                var Dm2  = toScreen(mk2.D.x, mk2.D.y);
+                var Em2  = toScreen(mk2.E.x, mk2.E.y);
+                var Fm2  = toScreen(mk2.F.x, mk2.F.y);
+
+                poseLinkBody(crank, O2s2, As2);
+                poseLinkBody(j, As2, Bs2);
+                poseTriBody(bd, O1_scr, Bs2, Ds2);
+                poseLinkBody(k, As2, Cs2);
+                poseLinkBody(c, O1_scr, Cs2);
+                poseLinkBody(f, Ds2, Es2);
+                poseTriBody(cef, Cs2, Es2, Fs2);
+                poseLinkBody(jm, As2, Bm2);
+                poseTriBody(bdm, O1m_scr, Bm2, Dm2);
+                poseLinkBody(km, As2, Cm2);
+                poseLinkBody(cm, O1m_scr, Cm2);
+                poseLinkBody(fm, Dm2, Em2);
+                poseTriBody(cefm, Cm2, Em2, Fm2);
+
+                // Position foot pads at F vertices
+                poseCircle(footL, Fs2);
+                poseCircle(footR, Fm2);
+            },
+
+            getFeet: function() {
+                return {
+                    L: { x: footL.position.x, y: footL.position.y },
+                    R: { x: footR.position.x, y: footR.position.y }
+                };
+            }
+        };
+    }
+
+    // ================================================================
+    // Create 3 sets + inter-crank links
+    // ================================================================
+    var phaseOffsets = [0, 120 * Math.PI / 180, 240 * Math.PI / 180];
+    var sets = [];
+    for (var i = 0; i < 3; i++) sets.push(createSet(i, phaseOffsets[i]));
+
+    function createInterCrank(label, sA, sB) {
+        var p1 = linkEnd(sA.crank, 1);
+        var p2 = linkEnd(sB.crank, 1);
+        var body = makeLinkBody(label, p1, p2, '#b0b8c8');
+        var jA = pin(sA.crank, sA.crank._endLocal, body, body._startLocal);
+        var jB = pin(body, body._endLocal, sB.crank, sB.crank._endLocal);
+        return {
+            body: body, joints: [jA, jB],
+            assemble: function() {
+                poseLinkBody(body, linkEnd(sA.crank, 1), linkEnd(sB.crank, 1));
+            }
+        };
+    }
+
+    var interLinks = [
+        createInterCrank('ic01', sets[0], sets[1]),
+        createInterCrank('ic12', sets[1], sets[2]),
+        createInterCrank('ic20', sets[2], sets[0])
+    ];
+
+    var allBodies = [], allJoints = [];
+    for (var i = 0; i < sets.length; i++) {
+        allBodies = allBodies.concat(sets[i].bodies);
+        allJoints = allJoints.concat(sets[i].joints);
+    }
+    for (var i = 0; i < interLinks.length; i++) {
+        allBodies.push(interLinks[i].body);
+        allJoints = allJoints.concat(interLinks[i].joints);
+    }
+
+    // ================================================================
+    // Ground
+    // ================================================================
+    var groundY = window.innerHeight - GROUND_H;
+    var ground = Bodies.rectangle(
+        window.innerWidth / 2,
+        groundY + GROUND_H / 2,
+        Math.max(window.innerWidth * 2, 2400),
+        GROUND_H,
+        {
+            label: 'ground', isStatic: true, friction: FOOT_FRICTION,
+            collisionFilter: cf(CAT_GROUND, CAT_CHASSIS | CAT_LINK | CAT_FOOT | CAT_OBS, 0),
+            render: { fillStyle: '#1a1d2a', strokeStyle: '#3a3f52', lineWidth: 1 }
+        }
+    );
+
+    // ================================================================
+    // Obstacles
+    // ================================================================
+    var obsX0 = O1_scr.x - 250;
+    var obsY  = groundY - 10;
+    var obsSpecs = [
+        { x: obsX0,       y: obsY, w: 36, h: 9, a:  0.02 },
+        { x: obsX0 + 55,  y: obsY, w: 36, h: 9, a: -0.04 },
+        { x: obsX0 + 110, y: obsY, w: 36, h: 9, a:  0.05 },
+        { x: obsX0 + 28,  y: obsY - 18, w: 34, h: 8, a:  0.08 },
+        { x: obsX0 + 83,  y: obsY - 18, w: 34, h: 8, a: -0.06 }
+    ];
+
+    var obstacles = obsSpecs.map(function(sp, i) {
+        var b = Bodies.rectangle(sp.x, sp.y, sp.w, sp.h, {
+            label: 'obs_' + i, density: 0.0012, friction: 0.9,
+            frictionAir: 0.04, restitution: 0.0,
+            collisionFilter: cf(CAT_OBS, CAT_GROUND | CAT_CHASSIS | CAT_LINK | CAT_FOOT | CAT_OBS | CAT_MOUSE, 0),
+            render: { fillStyle: '#5a6070', strokeStyle: '#8890a0', lineWidth: 1 }
+        });
+        Body.setAngle(b, sp.a);
+        b._init = { x: sp.x, y: sp.y, a: sp.a };
+        return b;
+    });
+
+    // ================================================================
+    // Add to world
+    // ================================================================
+    Composite.add(world, [ground, chassis].concat(allBodies).concat(allJoints).concat(obstacles));
+
+    // ================================================================
+    // Assembly & reset
+    // ================================================================
+    function assembleAll() {
+        Body.setPosition(chassis, chassisPos);
+        Body.setAngle(chassis, 0);
+        Body.setVelocity(chassis, { x: 0, y: 0 });
+        Body.setAngularVelocity(chassis, 0);
+        for (var i = 0; i < sets.length; i++) sets[i].assemble(phaseOffsets[i]);
+        for (var i = 0; i < interLinks.length; i++) interLinks[i].assemble();
+    }
+    assembleAll();
+
+    function resetAll() {
+        assembleAll();
+        for (var i = 0; i < obstacles.length; i++) {
+            var o = obstacles[i];
+            Body.setPosition(o, { x: o._init.x, y: o._init.y });
+            Body.setAngle(o, o._init.a);
+            Body.setVelocity(o, { x: 0, y: 0 });
+            Body.setAngularVelocity(o, 0);
+        }
+        for (var i = 0; i < sets.length; i++) {
+            sets[i].trails.L.length = 0;
+            sets[i].trails.R.length = 0;
+            sets[i].pid = { prevError: 0, rps: 0, rpsSmooth: 0 };
+        }
+    }
+
+    // ================================================================
+    // Mouse
+    // ================================================================
+    var mouse = Mouse.create(render.canvas);
+    var mouseConstraint = MouseConstraint.create(engine, {
+        mouse: mouse,
+        collisionFilter: cf(CAT_MOUSE, CAT_CHASSIS | CAT_LINK | CAT_FOOT | CAT_OBS, 0),
+        constraint: {
+            stiffness: MOUSE_STIFFNESS, damping: MOUSE_DAMPING,
+            length: 0, angularStiffness: 0,
+            render: { visible: false }
+        }
+    });
+    Composite.add(world, mouseConstraint);
+    render.mouse = mouse;
+
+    Events.on(mouseConstraint, 'enddrag', function(ev) {
+        var b = ev.body;
+        if (!b) return;
+        Body.setVelocity(b, { x: b.velocity.x * RELEASE_DAMP, y: b.velocity.y * RELEASE_DAMP });
+        Body.setAngularVelocity(b, b.angularVelocity * RELEASE_DAMP);
+    });
+
+    // ================================================================
+    // Motor — PD controller
+    // ================================================================
+    var targetRPS = 0.50;
+    var targetOmega = -targetRPS * 2 * Math.PI / 60;
+    var motorOn = false;
+    var physicsOn = false;
+
+    Events.on(engine, 'beforeUpdate', function() {
+        if (!motorOn) return;
+        for (var i = 0; i < sets.length; i++) {
+            var cr  = sets[i].crank;
+            var pid = sets[i].pid;
+
+            var relOmega = cr.angularVelocity - chassis.angularVelocity;
+            var error  = targetOmega - relOmega;
+            var dError = error - pid.prevError;
+            pid.prevError = error;
+
+            var tau = error * MOTOR_KP + dError * MOTOR_KD;
+            if (tau >  MOTOR_TAU_MAX) tau =  MOTOR_TAU_MAX;
+            if (tau < -MOTOR_TAU_MAX) tau = -MOTOR_TAU_MAX;
+
+            cr.torque      += tau;
+            chassis.torque -= tau;
+
+            pid.rps = -relOmega / (2 * Math.PI);
+            pid.rpsSmooth += 0.15 * (pid.rps - pid.rpsSmooth);
+        }
+    });
+
+    // ================================================================
+    // UI
+    // ================================================================
+    var elSpeed   = document.getElementById('slSpeed');
+    var elPh1     = document.getElementById('slPhase1');
+    var elPh2     = document.getElementById('slPhase2');
+    var elPhysics = document.getElementById('btnPhysics');
+    var elWalk    = document.getElementById('btnWalk');
+    var elReset   = document.getElementById('btnReset');
+
+    elSpeed.addEventListener('input', function() {
+        targetRPS = this.value / 100;
+        targetOmega = -targetRPS * 2 * Math.PI / 60;
+        document.getElementById('valSpeed').textContent = targetRPS.toFixed(2) + ' rps';
+    });
+
+    elPh1.addEventListener('input', function() {
+        var d = parseInt(this.value);
+        phaseOffsets[1] = d * Math.PI / 180;
+        document.getElementById('valPhase1').textContent = d + '\u00b0';
+    });
+
+    elPh2.addEventListener('input', function() {
+        var d = parseInt(this.value);
+        phaseOffsets[2] = d * Math.PI / 180;
+        document.getElementById('valPhase2').textContent = d + '\u00b0';
+    });
+
+    function startPhysics() {
+        if (physicsOn) return;
+        Runner.run(runner, engine);
+        physicsOn = true;
+        elPhysics.textContent = 'Physics ON';
+        elPhysics.className = 'on';
+    }
+
+    function startWalking() {
+        startPhysics();
+        motorOn = true;
+        for (var i = 0; i < sets.length; i++) sets[i].pid.prevError = 0;
+        elWalk.textContent = 'Stop!';
+        elWalk.className = 'on';
+    }
+
+    elPhysics.addEventListener('click', function() {
+        startPhysics();
+    });
+
+    elWalk.addEventListener('click', function() {
+        if (!motorOn) {
+            startWalking();
+        } else {
+            motorOn = false;
+            for (var i = 0; i < sets.length; i++) sets[i].pid.prevError = 0;
+            this.textContent = 'Walk!';
+            this.className = '';
+        }
+    });
+
+    elReset.addEventListener('click', function() {
+        motorOn = false;
+        resetAll();
+        startWalking();
+    });
+
+    // Auto-start on load
+    startWalking();
+
+    document.getElementById('slKp').addEventListener('input', function() {
+        MOTOR_KP = parseFloat(this.value);
+        document.getElementById('valKp').textContent = MOTOR_KP;
+    });
+
+    document.getElementById('slKd').addEventListener('input', function() {
+        MOTOR_KD = parseFloat(this.value);
+        document.getElementById('valKd').textContent = MOTOR_KD.toFixed(1);
+    });
+
+    document.getElementById('slTau').addEventListener('input', function() {
+        MOTOR_TAU_MAX = parseFloat(this.value);
+        document.getElementById('valTau').textContent = MOTOR_TAU_MAX.toFixed(1);
+    });
+
+    // ================================================================
+    // Keyboard shortcuts
+    // ================================================================
+    document.addEventListener('keydown', function(e) {
+        var step = 10;
+        if (e.key === 'ArrowRight') {
+            elSpeed.value = Math.min(300, parseInt(elSpeed.value) + step);
+            elSpeed.dispatchEvent(new Event('input'));
+        } else if (e.key === 'ArrowLeft') {
+            elSpeed.value = Math.max(-300, parseInt(elSpeed.value) - step);
+            elSpeed.dispatchEvent(new Event('input'));
+        } else if (e.key === 'Enter') {
+            elWalk.click();
+        } else if (e.key === ' ') {
+            e.preventDefault();
+            elReset.click();
+        }
+    });
+
+    // ================================================================
+    // Overlay
+    // ================================================================
+    var TRAIL_MAX = 1500;
+
+    Events.on(render, 'afterRender', function() {
+        var ctx = render.context;
+
+        var avgRps = 0;
+        for (var i = 0; i < sets.length; i++) avgRps += sets[i].pid.rpsSmooth;
+        avgRps /= sets.length;
+        document.getElementById('valActual').textContent = avgRps.toFixed(2) + ' rps';
+
+        for (var i = 0; i < sets.length; i++) {
+            var feet = sets[i].getFeet();
+            var tr = sets[i].trails;
+            tr.L.unshift(Vector.clone(feet.L));
+            tr.R.unshift(Vector.clone(feet.R));
+            if (tr.L.length > TRAIL_MAX) tr.L.pop();
+            if (tr.R.length > TRAIL_MAX) tr.R.pop();
+        }
+
+        Render.startViewTransform(render);
+        ctx.globalAlpha = 0.6;
+        for (var i = 0; i < sets.length; i++) {
+            var tr = sets[i].trails;
+            var tc = TRAIL_COLORS[i];
+            drawTrail(ctx, tr.L, tc.left);
+            drawTrail(ctx, tr.R, tc.right);
+        }
+        ctx.globalAlpha = 1;
+        Render.endViewTransform(render);
+
+        var o1w  = toWorld(chassis, ch_O1);
+        var o2w  = toWorld(chassis, ch_O2);
+        var o1mw = toWorld(chassis, ch_O1m);
+
+        drawAnchor(ctx, o1w,  'O\u2081');
+        drawAnchor(ctx, o2w,  'O\u2082');
+        drawAnchor(ctx, o1mw, 'O\u2081\u2032');
+
+        for (var i = 0; i < sets.length; i++) {
+            var feet = sets[i].getFeet();
+            var tc = TRAIL_COLORS[i];
+            drawDot(ctx, feet.L, 'F'+i,       'rgb('+tc.left+')');
+            drawDot(ctx, feet.R, 'F'+i+'\u2032', 'rgb('+tc.right+')');
+        }
+
+        ctx.beginPath();
+        ctx.arc(o2w.x, o2w.y, L.m * S, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
+    });
+
+    function drawTrail(ctx, pts, rgb) {
+        for (var n = 0; n < pts.length; n++) {
+            var alpha = 1 - (n / pts.length) * 0.85;
+            ctx.fillStyle = 'rgba(' + rgb + ',' + alpha + ')';
+            ctx.fillRect(pts[n].x, pts[n].y, 2, 2);
+        }
+    }
+
+    function drawAnchor(ctx, p, label) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#cc2222'; ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#0f0f1a'; ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#cc2222'; ctx.fill();
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = '#ff6666';
+        ctx.fillText(label, p.x + 8, p.y - 8);
+    }
+
+    function drawDot(ctx, p, label, color) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff'; ctx.fill();
+        ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = color;
+        ctx.fillText(label, p.x + 6, p.y - 6);
+    }
+
+    // ================================================================
+    // Viewport
+    // ================================================================
+    function updateViewport() {
+        groundY = window.innerHeight - GROUND_H;
+        Render.setSize(render, window.innerWidth, window.innerHeight);
+        Body.setPosition(ground, { x: window.innerWidth / 2, y: groundY + GROUND_H / 2 });
+        Render.lookAt(render, {
+            min: { x: 0, y: 0 },
+            max: { x: window.innerWidth, y: window.innerHeight }
+        });
+    }
+    window.addEventListener('resize', updateViewport);
+    updateViewport();
+
+})();
+</script>
+</body>
+</html>
